@@ -579,7 +579,7 @@ class MSSQLMappingLoader(MSSQLLoader):
         )
         from field_mapper.loaders.mapping_loader import ApprovedMappingLoader
 
-        return ApprovedMappingLoader()._records_to_mappings(
+        return ApprovedMappingLoader().records_to_mappings(
             records,
             field_mapping=field_mapping,
         )

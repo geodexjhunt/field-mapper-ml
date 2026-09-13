@@ -150,6 +150,14 @@ class ApprovedMappingLoader:
             )
         return normalized_mappings
 
+    def records_to_mappings(
+        self,
+        records: Iterable[Dict[str, str]],
+        field_mapping: Optional[Dict[str, str]] = None
+    ) -> List[ApprovedMapping]:
+        """Convert dictionaries into ApprovedMapping models."""
+        return self._records_to_mappings(records, field_mapping=field_mapping)
+
     def _normalize_record(
         self,
         record: Dict[str, str],
