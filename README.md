@@ -17,6 +17,7 @@ Field Mapper ML helps automate the process of matching source database fields to
 - 🔒 **Privacy-First**: Field names only—no sensitive data exposure
 - 📝 **Batch Processing**: Review multiple files (~100-200 fields) per job
 - ✅ **Approval Workflow**: User review and approval/rejection of proposed mappings
+- 🗄️ **Extensible Data Loaders**: Load source/target metadata from SQL and approved mappings from JSON/CSV
 
 ## Architecture
 
@@ -100,11 +101,14 @@ field-mapper-ml/
 ├── field_mapper/
 │   ├── __init__.py
 │   ├── mapper.py              # Main field mapper logic
+│   ├── loaders/               # SQL and mapping file loaders
 │   ├── embeddings.py          # Embedding backends (Google, Cohere, Local)
 │   ├── scoring.py             # Similarity scoring logic
 │   ├── models.py              # Data models
 │   └── utils.py               # Utility functions
 ├── examples/
+│   ├── load_from_sql_example.py
+│   ├── load_mappings_example.py
 │   ├── sample_approved_mappings.json
 │   ├── sample_target_fields.json
 │   ├── sample_source_fields.json
@@ -194,6 +198,41 @@ Response:
     }
   ]
 }
+```
+
+## Data Loaders
+
+### Load field metadata from Microsoft SQL Server
+
+```python
+from field_mapper.loaders import MSSQLLoader
+
+loader = MSSQLLoader(
+    server="localhost",
+    database="FieldMapperDemo",
+    trusted_connection=True,
+)
+
+source_fields = loader.load_source_fields(
+    schema="dbo",
+    table="customers",
+    include_min_max=True,
+    include_unique_counts=True,
+)
+target_fields = loader.load_target_fields(schema="dw", table="dim_customer")
+```
+
+The SQL loader is structured so other database loaders can follow the same
+`extract_field_metadata`, `load_source_fields`, and `load_target_fields`
+pattern later.
+
+### Load approved mappings from JSON or CSV
+
+```python
+from field_mapper.loaders import ApprovedMappingLoader
+
+loader = ApprovedMappingLoader()
+approved_mappings = loader.load("approved_mappings.json")
 ```
 
 ## Development
