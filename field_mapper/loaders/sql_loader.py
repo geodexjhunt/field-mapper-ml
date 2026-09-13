@@ -140,6 +140,22 @@ class BaseSQLLoader:
 
         return loaded_fields
 
+    def _mapped_column_names(
+        self,
+        field_names: List[str],
+        field_mapping: Optional[Dict[str, str]] = None,
+    ) -> List[str]:
+        """Resolve model field names to the SQL columns that need to be read."""
+        columns = []
+        for field_name in field_names:
+            column_name = (
+                field_mapping.get(field_name, field_name)
+                if field_mapping else field_name
+            )
+            if column_name and column_name not in columns:
+                columns.append(column_name)
+        return columns
+
 
 class MSSQLLoader(BaseSQLLoader):
     """Metadata loader for Microsoft SQL Server."""
@@ -300,9 +316,26 @@ class MSSQLLoader(BaseSQLLoader):
 
             return field_metadata
 
-    def fetch_table_rows(self, schema: str, table: str) -> List[Dict[str, Any]]:
-        """Fetch all rows from a SQL table."""
-        query = f"SELECT * FROM {self._qualified_table_name(schema, table)}"
+    def fetch_table_rows(
+        self,
+        schema: str,
+        table: str,
+        columns: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch selected rows and columns from a SQL table."""
+        selected_columns = columns or []
+        if not selected_columns:
+            raise MissingFieldMetadataError(
+                "At least one SQL column must be requested."
+            )
+
+        select_list = ", ".join(
+            self._quote_identifier(column_name) for column_name in selected_columns
+        )
+        query = (
+            f"SELECT {select_list} "
+            f"FROM {self._qualified_table_name(schema, table)}"
+        )
 
         with closing(self._open_connection()) as connection:
             cursor = connection.cursor()
@@ -334,7 +367,14 @@ class MSSQLLoader(BaseSQLLoader):
         field_mapping: Optional[Dict[str, str]] = None,
     ) -> List[TargetField]:
         """Load curated target fields from a SQL table."""
-        records = self.fetch_table_rows(schema, table)
+        records = self.fetch_table_rows(
+            schema,
+            table,
+            columns=self._mapped_column_names(
+                list(TargetField.__dataclass_fields__.keys()),
+                field_mapping=field_mapping,
+            ),
+        )
         return self._records_to_field_models(
             TargetField,
             records,
@@ -529,7 +569,14 @@ class MSSQLMappingLoader(MSSQLLoader):
         field_mapping: Optional[Dict[str, str]] = None,
     ) -> List[ApprovedMapping]:
         """Load approved mappings from a SQL table."""
-        records = self.fetch_table_rows(schema, table)
+        records = self.fetch_table_rows(
+            schema,
+            table,
+            columns=self._mapped_column_names(
+                list(ApprovedMapping.__dataclass_fields__.keys()),
+                field_mapping=field_mapping,
+            ),
+        )
         approved_mappings = []
 
         for record in records:

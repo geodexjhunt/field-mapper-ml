@@ -33,10 +33,12 @@ class FakeCursor:
         self.table_rows = table_rows or []
         self.fail_table_query = fail_table_query
         self.description = None
+        self.last_query = None
         self._rows = []
         self._row = None
 
     def execute(self, query, *params):
+        self.last_query = query
         if "INFORMATION_SCHEMA.COLUMNS" in query:
             self.description = [
                 ("name",),
@@ -62,7 +64,11 @@ class FakeCursor:
             self._row = None
             return
 
-        if query.strip().startswith("SELECT * FROM"):
+        if (
+            query.strip().startswith("SELECT ")
+            and " FROM [" in query
+            and " AS col_" not in query
+        ):
             if self.fail_table_query:
                 raise RuntimeError("query failed")
             self.description = None
@@ -260,6 +266,9 @@ def test_mssql_loader_loads_target_fields_from_curated_table():
     assert target_fields[0].max_length == 25
     assert target_fields[0].min_value == "A"
     assert target_fields[0].max_value == "Z"
+    assert "SELECT *" not in cursor.last_query
+    assert "[field_name]" in cursor.last_query
+    assert "[target_table_name]" in cursor.last_query
 
 
 def test_mssql_loader_target_table_defaults_table_name_when_missing():
@@ -308,6 +317,33 @@ def test_mssql_loader_target_table_raises_for_bad_field_mapping():
             table="curated_target_fields",
             field_mapping={
                 "name": "wrong_column",
+                "table": "target_table_name",
+            },
+        )
+
+
+def test_mssql_loader_target_table_raises_for_empty_required_field():
+    """Empty strings in required target-field columns should be rejected."""
+    cursor = FakeCursor(
+        columns=[],
+        table_rows=[
+            {
+                "field_name": "",
+                "target_table_name": "dw.dim_customer",
+            }
+        ],
+    )
+    loader = MSSQLLoader(
+        database="warehouse",
+        connection_factory=lambda _: FakeConnection(cursor),
+    )
+
+    with pytest.raises(MissingFieldMetadataError):
+        loader.load_target_fields_from_table(
+            schema="config",
+            table="curated_target_fields",
+            field_mapping={
+                "name": "field_name",
                 "table": "target_table_name",
             },
         )
@@ -502,6 +538,9 @@ def test_approved_mapping_loader_reads_sql_table():
     assert mappings[0].target_name == "cust_id"
     assert mappings[0].target_data_type == "int"
     assert mappings[0].approved_by == "data-team"
+    assert "SELECT *" not in cursor.last_query
+    assert "[src_field]" in cursor.last_query
+    assert "[dst_table_name]" in cursor.last_query
 
 
 def test_mssql_mapping_loader_raises_for_missing_required_fields():
@@ -513,6 +552,28 @@ def test_mssql_mapping_loader_raises_for_missing_required_fields():
                 "source_name": "customer_id",
                 "source_table": "dbo.customers",
                 "target_name": "cust_id",
+            }
+        ],
+    )
+    loader = MSSQLMappingLoader(
+        database="warehouse",
+        connection_factory=lambda _: FakeConnection(cursor),
+    )
+
+    with pytest.raises(MissingFieldMetadataError):
+        loader.load_mappings(schema="config", table="approved_mappings")
+
+
+def test_mssql_mapping_loader_rejects_empty_required_fields():
+    """Empty strings in required SQL mapping columns should be rejected."""
+    cursor = FakeCursor(
+        columns=[],
+        table_rows=[
+            {
+                "source_name": "customer_id",
+                "source_table": "dbo.customers",
+                "target_name": "cust_id",
+                "target_table": "",
             }
         ],
     )
