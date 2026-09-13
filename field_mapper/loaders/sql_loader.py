@@ -4,6 +4,7 @@ from contextlib import closing
 from dataclasses import MISSING
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 
+from field_mapper.loaders.mapping_loader import ApprovedMappingLoader
 from field_mapper.models import ApprovedMapping, SourceField, TargetField
 
 
@@ -577,8 +578,6 @@ class MSSQLMappingLoader(MSSQLLoader):
                 field_mapping=field_mapping,
             ),
         )
-        from field_mapper.loaders.mapping_loader import ApprovedMappingLoader
-
         return ApprovedMappingLoader().records_to_mappings(
             records,
             field_mapping=field_mapping,

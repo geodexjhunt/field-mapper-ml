@@ -3,10 +3,12 @@
 import csv
 import json
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional
 
 from field_mapper.models import ApprovedMapping
-from field_mapper.loaders.sql_loader import MSSQLMappingLoader
+
+if TYPE_CHECKING:
+    from field_mapper.loaders.sql_loader import MSSQLMappingLoader
 
 
 class MalformedMappingFileError(ValueError):
@@ -125,7 +127,7 @@ class ApprovedMappingLoader:
 
     def load_sql(
         self,
-        loader: MSSQLMappingLoader,
+        loader: "MSSQLMappingLoader",
         schema: str,
         table: str,
         field_mapping: Optional[Dict[str, str]] = None,
