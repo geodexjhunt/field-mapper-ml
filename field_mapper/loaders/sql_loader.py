@@ -480,6 +480,8 @@ class MSSQLLoader(BaseSQLLoader):
 
     def _quote_identifier(self, identifier: str) -> str:
         """Safely quote an MSSQL identifier."""
+        if not identifier or not identifier.strip():
+            raise InvalidTableReferenceError("SQL identifiers must not be blank.")
         return f"[{identifier.replace(']', ']]')}]"
 
     def _row_to_dict(self, cursor: Any, row: Any) -> Dict[str, Any]:

@@ -305,6 +305,17 @@ def test_mssql_loader_target_table_raises_for_query_failures():
         )
 
 
+def test_mssql_loader_rejects_blank_table_identifiers():
+    """Blank SQL identifiers should be rejected before query execution."""
+    loader = MSSQLLoader(
+        database="warehouse",
+        connection_factory=lambda _: FakeConnection(FakeCursor(columns=[])),
+    )
+
+    with pytest.raises(InvalidTableReferenceError):
+        loader.load_target_fields_from_table(schema="config", table=" ")
+
+
 def test_mssql_loader_wraps_connection_failures():
     """Connection factory failures should be normalized."""
     loader = MSSQLLoader(
