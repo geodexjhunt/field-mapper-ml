@@ -1,6 +1,7 @@
 """Tests for SQL and mapping loaders."""
 
 import json
+import re
 
 import pytest
 
@@ -40,22 +41,30 @@ class FakeCursor:
             return
 
         if "TABLE_CONSTRAINTS" in query:
-            self.description = [("name",)]
-            self._rows = [(name,) for name in self.unique_columns]
+            self.description = [("constraint_name",), ("name",)]
+            if self.unique_columns and isinstance(self.unique_columns[0], tuple):
+                self._rows = self.unique_columns
+            else:
+                self._rows = [
+                    (f"constraint_{index}", name)
+                    for index, name in enumerate(self.unique_columns)
+                ]
             self._row = None
             return
 
-        self.description = []
+        aliases = re.findall(r"AS (col_\d+_[a-z_]+)", query)
+        self.description = [(alias,) for alias in aliases]
         self._rows = []
-        self._row = None
-        for column_name, values in self.stats.items():
-            if f"[{column_name}]" in query:
-                self.description = [
-                    (field_name,)
-                    for field_name in values.keys()
-                ]
-                self._row = tuple(values.values())
-                break
+        values = []
+        for alias in aliases:
+            match = re.match(r"col_(\d+)_(.+)", alias)
+            if not match:
+                continue
+            column_index = int(match.group(1))
+            stat_name = match.group(2)
+            column_name = self.columns[column_index][0]
+            values.append(self.stats.get(column_name, {}).get(stat_name))
+        self._row = tuple(values) if values else None
 
     def fetchall(self):
         return self._rows
@@ -124,6 +133,32 @@ def test_mssql_loader_loads_source_and_target_fields():
     assert target_fields[1].table == "dbo.customers"
 
 
+def test_mssql_loader_marks_only_single_column_unique_constraints():
+    """Composite unique constraints should not mark individual columns as unique."""
+    cursor = FakeCursor(
+        columns=[
+            ("customer_id", "int", None, 10, 0, "NO"),
+            ("email_address", "varchar", 255, None, None, "YES"),
+            ("region_code", "varchar", 10, None, None, "YES"),
+        ],
+        unique_columns=[
+            ("PK_customers", "customer_id"),
+            ("UQ_email_region", "email_address"),
+            ("UQ_email_region", "region_code"),
+        ],
+    )
+    loader = MSSQLLoader(
+        database="warehouse",
+        connection_factory=lambda _: FakeConnection(cursor),
+    )
+
+    metadata = loader.extract_field_metadata(schema="dbo", table="customers")
+
+    assert metadata[0]["is_unique"] is True
+    assert metadata[1]["is_unique"] is False
+    assert metadata[2]["is_unique"] is False
+
+
 def test_mssql_loader_raises_for_invalid_table_reference():
     """An empty metadata result should raise an invalid table error."""
     loader = MSSQLLoader(
@@ -190,12 +225,20 @@ def test_mssql_loader_rejects_invalid_auth_configurations():
         trusted_connection=False,
         username="etl_user",
     )
+    password_only_loader = MSSQLLoader(
+        database="warehouse",
+        trusted_connection=False,
+    )
+    password_only_loader.password = "demo_password"
 
     with pytest.raises(DatabaseConnectionError):
         mixed_auth_loader.build_connection_string()
 
     with pytest.raises(DatabaseConnectionError):
         partial_auth_loader.build_connection_string()
+
+    with pytest.raises(DatabaseConnectionError):
+        password_only_loader.build_connection_string()
 
 
 def test_approved_mapping_loader_reads_json_and_csv(tmp_path):

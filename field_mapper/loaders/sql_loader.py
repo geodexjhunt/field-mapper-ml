@@ -215,6 +215,20 @@ class MSSQLLoader(BaseSQLLoader):
                 )
 
             unique_columns = self._fetch_unique_columns(cursor, schema, table)
+            column_stats = {}
+            if include_min_max or include_unique_counts:
+                column_stats = self._fetch_table_stats(
+                    cursor=cursor,
+                    schema=schema,
+                    table=table,
+                    column_names=[
+                        column["name"]
+                        for column in column_metadata
+                        if column.get("name")
+                    ],
+                    include_min_max=include_min_max,
+                    include_unique_counts=include_unique_counts,
+                )
             field_metadata = []
 
             for column in column_metadata:
@@ -239,17 +253,15 @@ class MSSQLLoader(BaseSQLLoader):
                     "numeric_scale": column.get("numeric_scale"),
                 }
 
-                if include_min_max or include_unique_counts:
-                    metadata.update(
-                        self._fetch_column_stats(
-                            cursor=cursor,
-                            schema=schema,
-                            table=table,
-                            column_name=column_name,
+                metadata.update(
+                    column_stats.get(
+                        column_name,
+                        self._default_column_stats(
                             include_min_max=include_min_max,
                             include_unique_counts=include_unique_counts,
-                        )
+                        ),
                     )
+                )
 
                 field_metadata.append(metadata)
 
@@ -286,7 +298,9 @@ class MSSQLLoader(BaseSQLLoader):
     ) -> set[str]:
         """Fetch columns that participate in primary-key or unique constraints."""
         query = """
-        SELECT kcu.COLUMN_NAME AS name
+        SELECT
+            tc.CONSTRAINT_NAME AS constraint_name,
+            kcu.COLUMN_NAME AS name
         FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
         INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
             ON tc.CONSTRAINT_NAME = kcu.CONSTRAINT_NAME
@@ -297,65 +311,90 @@ class MSSQLLoader(BaseSQLLoader):
           AND tc.CONSTRAINT_TYPE IN ('PRIMARY KEY', 'UNIQUE')
         """
         cursor.execute(query, schema, table)
+        constraints = {}
+        for row_dict in (self._row_to_dict(cursor, row) for row in cursor.fetchall()):
+            constraint_name = row_dict.get("constraint_name")
+            column_name = row_dict.get("name")
+            if constraint_name and column_name:
+                constraints.setdefault(constraint_name, []).append(column_name)
+
         return {
-            row_dict["name"]
-            for row_dict in (self._row_to_dict(cursor, row) for row in cursor.fetchall())
-            if row_dict.get("name")
+            columns[0]
+            for columns in constraints.values()
+            if len(columns) == 1 and columns[0]
         }
 
-    def _fetch_column_stats(
+    def _fetch_table_stats(
         self,
         cursor: Any,
         schema: str,
         table: str,
-        column_name: str,
+        column_names: List[str],
         include_min_max: bool,
         include_unique_counts: bool
-    ) -> Dict[str, Any]:
-        """Fetch value statistics for a column."""
+    ) -> Dict[str, Dict[str, Any]]:
+        """Fetch value statistics for all requested columns in one query."""
         select_clauses = []
-        if include_min_max:
-            select_clauses.extend(
-                [
-                    f"MIN({self._quote_identifier(column_name)}) AS min_value",
-                    f"MAX({self._quote_identifier(column_name)}) AS max_value",
-                ]
-            )
-        if include_unique_counts:
-            select_clauses.append(
-                f"COUNT(DISTINCT {self._quote_identifier(column_name)}) "
-                "AS unique_values_count"
-            )
+        for index, column_name in enumerate(column_names):
+            quoted_column = self._quote_identifier(column_name)
+            if include_min_max:
+                select_clauses.extend(
+                    [
+                        f"MIN({quoted_column}) AS col_{index}_min_value",
+                        f"MAX({quoted_column}) AS col_{index}_max_value",
+                    ]
+                )
+            if include_unique_counts:
+                select_clauses.append(
+                    f"COUNT(DISTINCT {quoted_column}) "
+                    f"AS col_{index}_unique_values_count"
+                )
 
         query = f"""
         SELECT {", ".join(select_clauses)}
         FROM {self._qualified_table_name(schema, table)}
-        WHERE {self._quote_identifier(column_name)} IS NOT NULL
         """
         cursor.execute(query)
         row = cursor.fetchone()
         if row is None:
             return {
-                "min_value": None,
-                "max_value": None,
-                "unique_values_count": 0 if include_unique_counts else None,
+                column_name: self._default_column_stats(
+                    include_min_max=include_min_max,
+                    include_unique_counts=include_unique_counts,
+                )
+                for column_name in column_names
             }
+
         row_dict = self._row_to_dict(cursor, row)
-        non_count_values = [
-            value
-            for key, value in row_dict.items()
-            if key != "unique_values_count"
-        ]
-        if (
-            all(value is None for value in non_count_values)
-            and row_dict.get("unique_values_count") in (None, 0)
-        ):
-            return {
-                "min_value": None,
-                "max_value": None,
-                "unique_values_count": 0 if include_unique_counts else None,
-            }
-        return row_dict
+        column_stats = {}
+        for index, column_name in enumerate(column_names):
+            stats = self._default_column_stats(
+                include_min_max=include_min_max,
+                include_unique_counts=include_unique_counts,
+            )
+            if include_min_max:
+                stats["min_value"] = row_dict.get(f"col_{index}_min_value")
+                stats["max_value"] = row_dict.get(f"col_{index}_max_value")
+            if include_unique_counts:
+                stats["unique_values_count"] = row_dict.get(
+                    f"col_{index}_unique_values_count",
+                    0,
+                )
+            column_stats[column_name] = stats
+
+        return column_stats
+
+    def _default_column_stats(
+        self,
+        include_min_max: bool,
+        include_unique_counts: bool
+    ) -> Dict[str, Any]:
+        """Build a default stats payload for a column."""
+        return {
+            "min_value": None if include_min_max else None,
+            "max_value": None if include_min_max else None,
+            "unique_values_count": 0 if include_unique_counts else None,
+        }
 
     def _qualified_table_name(self, schema: str, table: str) -> str:
         """Build a safely quoted SQL Server table identifier."""

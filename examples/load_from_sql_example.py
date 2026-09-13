@@ -1,5 +1,6 @@
 """Example for loading SQL metadata into source and target field models."""
 
+import re
 import sys
 from pathlib import Path
 
@@ -37,19 +38,29 @@ class DemoCursor:
             ]
             self._row = None
         elif "TABLE_CONSTRAINTS" in query:
-            self.description = [("name",)]
-            self._rows = [("customer_id",)]
+            self.description = [("constraint_name",), ("name",)]
+            self._rows = [("PK_customers", "customer_id")]
             self._row = None
         else:
-            self.description = [
-                ("min_value",),
-                ("max_value",),
-                ("unique_values_count",),
-            ]
-            if "[customer_id]" in query:
-                self._row = (1, 5000, 5000)
-            else:
-                self._row = ("a@example.com", "z@example.com", 4500)
+            aliases = re.findall(r"AS (col_\d+_[a-z_]+)", query)
+            self.description = [(alias,) for alias in aliases]
+            values = []
+            for alias in aliases:
+                if alias.startswith("col_0_"):
+                    if alias.endswith("min_value"):
+                        values.append(1)
+                    elif alias.endswith("max_value"):
+                        values.append(5000)
+                    else:
+                        values.append(5000)
+                else:
+                    if alias.endswith("min_value"):
+                        values.append("a@example.com")
+                    elif alias.endswith("max_value"):
+                        values.append("z@example.com")
+                    else:
+                        values.append(4500)
+            self._row = tuple(values)
             self._rows = []
 
     def fetchall(self):
