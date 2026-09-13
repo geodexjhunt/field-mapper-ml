@@ -5,6 +5,11 @@ Example demonstrating field mapping with dual strategy:
 """
 
 import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from field_mapper.mapper import FieldMapper
 from field_mapper.models import SourceField, TargetField, ApprovedMapping
 from field_mapper.utils import print_proposals
