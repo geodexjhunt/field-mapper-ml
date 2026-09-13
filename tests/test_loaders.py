@@ -286,6 +286,33 @@ def test_mssql_loader_target_table_defaults_table_name_when_missing():
     assert target_fields[0].table == "config.curated_target_fields"
 
 
+def test_mssql_loader_target_table_raises_for_bad_field_mapping():
+    """Misconfigured target-field mappings should fail on required fields."""
+    cursor = FakeCursor(
+        columns=[],
+        table_rows=[
+            {
+                "field_name": "customer_status",
+                "target_table_name": "dw.dim_customer",
+            }
+        ],
+    )
+    loader = MSSQLLoader(
+        database="warehouse",
+        connection_factory=lambda _: FakeConnection(cursor),
+    )
+
+    with pytest.raises(MissingFieldMetadataError):
+        loader.load_target_fields_from_table(
+            schema="config",
+            table="curated_target_fields",
+            field_mapping={
+                "name": "wrong_column",
+                "table": "target_table_name",
+            },
+        )
+
+
 def test_mssql_loader_target_table_raises_for_query_failures():
     """Curated target field queries should normalize inaccessible tables."""
     cursor = FakeCursor(
@@ -510,6 +537,17 @@ def test_mssql_mapping_loader_raises_for_query_failures():
     )
 
     with pytest.raises(InvalidTableReferenceError):
+        loader.load_mappings(schema="config", table="approved_mappings")
+
+
+def test_mssql_mapping_loader_wraps_connection_failures():
+    """SQL mapping loader should preserve DatabaseConnectionError behavior."""
+    loader = MSSQLMappingLoader(
+        database="warehouse",
+        connection_factory=lambda _: (_ for _ in ()).throw(RuntimeError("boom")),
+    )
+
+    with pytest.raises(DatabaseConnectionError):
         loader.load_mappings(schema="config", table="approved_mappings")
 
 

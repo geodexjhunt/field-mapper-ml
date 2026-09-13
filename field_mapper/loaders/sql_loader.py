@@ -238,7 +238,7 @@ class MSSQLLoader(BaseSQLLoader):
         include_unique_counts: bool = False
     ) -> List[Dict[str, Any]]:
         """Extract field metadata from a SQL Server table."""
-        with closing(self.get_connection()) as connection:
+        with closing(self._open_connection()) as connection:
             cursor = connection.cursor()
             column_metadata = self._fetch_column_metadata(cursor, schema, table)
 
@@ -304,7 +304,7 @@ class MSSQLLoader(BaseSQLLoader):
         """Fetch all rows from a SQL table."""
         query = f"SELECT * FROM {self._qualified_table_name(schema, table)}"
 
-        with closing(self.get_connection()) as connection:
+        with closing(self._open_connection()) as connection:
             cursor = connection.cursor()
             try:
                 cursor.execute(query)
@@ -315,6 +315,17 @@ class MSSQLLoader(BaseSQLLoader):
                 ) from exc
 
             return [self._row_to_dict(cursor, row) for row in rows]
+
+    def _open_connection(self) -> Any:
+        """Open a database connection using the loader's standard error contract."""
+        try:
+            return self.get_connection()
+        except DatabaseConnectionError:
+            raise
+        except Exception as exc:
+            raise DatabaseConnectionError(
+                f"Failed to connect to database {self.database!r}."
+            ) from exc
 
     def load_target_fields_from_table(
         self,
