@@ -340,7 +340,22 @@ class MSSQLLoader(BaseSQLLoader):
                 "max_value": None,
                 "unique_values_count": 0 if include_unique_counts else None,
             }
-        return self._row_to_dict(cursor, row)
+        row_dict = self._row_to_dict(cursor, row)
+        non_count_values = [
+            value
+            for key, value in row_dict.items()
+            if key != "unique_values_count"
+        ]
+        if (
+            all(value is None for value in non_count_values)
+            and row_dict.get("unique_values_count") in (None, 0)
+        ):
+            return {
+                "min_value": None,
+                "max_value": None,
+                "unique_values_count": 0 if include_unique_counts else None,
+            }
+        return row_dict
 
     def _qualified_table_name(self, schema: str, table: str) -> str:
         """Build a safely quoted SQL Server table identifier."""

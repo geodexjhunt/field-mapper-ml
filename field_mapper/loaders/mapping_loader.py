@@ -64,7 +64,12 @@ class ApprovedMappingLoader:
             ) from exc
 
         if isinstance(data, dict):
-            data = data.get("mappings", [])
+            if "mappings" not in data:
+                raise MalformedMappingFileError(
+                    "JSON mapping files with object payloads must contain a "
+                    "'mappings' array."
+                )
+            data = data["mappings"]
 
         if not isinstance(data, list):
             raise MalformedMappingFileError(

@@ -167,7 +167,7 @@ def test_mssql_loader_builds_sql_auth_connection_string():
         trusted_connection=False,
         username="etl_user",
     )
-    setattr(loader, "pass" "word", "demo_password")
+    loader.password = "demo_password"
 
     connection_string = loader.build_connection_string()
 
@@ -226,11 +226,50 @@ def test_approved_mapping_loader_reads_json_and_csv(tmp_path):
     assert csv_mappings[0].target_name == "customer_email"
 
 
+def test_approved_mapping_loader_dispatches_by_extension_and_type(tmp_path):
+    """The generic load entry point should dispatch by extension or override."""
+    json_path = tmp_path / "approved_mappings.data"
+    json_path.write_text(
+        json.dumps(
+            {
+                "mappings": [
+                    {
+                        "source_name": "customer_id",
+                        "source_table": "dbo.customers",
+                        "target_name": "cust_id",
+                        "target_table": "dw.dim_customer",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    csv_path = tmp_path / "approved_mappings.csv"
+    csv_path.write_text(
+        "source_name,source_table,target_name,target_table\n"
+        "email_address,dbo.customers,customer_email,dw.dim_customer\n",
+        encoding="utf-8",
+    )
+
+    loader = ApprovedMappingLoader()
+
+    from_explicit_type = loader.load(str(json_path), file_type="json")
+    from_extension = loader.load(str(csv_path))
+
+    assert from_explicit_type[0].target_name == "cust_id"
+    assert from_extension[0].source_name == "email_address"
+
+
 def test_approved_mapping_loader_raises_for_malformed_files(tmp_path):
     """Malformed mapping content should raise a dedicated error."""
     invalid_json_path = tmp_path / "invalid.json"
     invalid_csv_path = tmp_path / "invalid.csv"
+    invalid_object_json_path = tmp_path / "invalid_object.json"
     invalid_json_path.write_text("{not valid json", encoding="utf-8")
+    invalid_object_json_path.write_text(
+        json.dumps({"unexpected": []}),
+        encoding="utf-8",
+    )
     invalid_csv_path.write_text(
         "source_name,source_table,target_name\n"
         "customer_id,dbo.customers,cust_id\n",
@@ -241,6 +280,9 @@ def test_approved_mapping_loader_raises_for_malformed_files(tmp_path):
 
     with pytest.raises(MalformedMappingFileError):
         loader.load_json(str(invalid_json_path))
+
+    with pytest.raises(MalformedMappingFileError):
+        loader.load_json(str(invalid_object_json_path))
 
     with pytest.raises(MalformedMappingFileError):
         loader.load_csv(str(invalid_csv_path))
