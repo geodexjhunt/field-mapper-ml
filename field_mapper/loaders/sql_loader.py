@@ -1,9 +1,11 @@
 """SQL data loaders for source and target field metadata."""
 
 from contextlib import closing
+from dataclasses import MISSING
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 
-from field_mapper.models import SourceField, TargetField
+from field_mapper.loaders.mapping_loader import ApprovedMappingLoader
+from field_mapper.models import ApprovedMapping, SourceField, TargetField
 
 
 class DatabaseConnectionError(ConnectionError):
@@ -70,6 +72,15 @@ class BaseSQLLoader:
             include_unique_counts=include_unique_counts,
         )
 
+    def load_target_fields_from_table(
+        self,
+        schema: str,
+        table: str,
+        field_mapping: Optional[Dict[str, str]] = None,
+    ) -> List[TargetField]:
+        """Load curated target fields from a SQL table."""
+        raise NotImplementedError
+
     def _load_fields(
         self,
         model_class: Type[FieldModel],
@@ -87,25 +98,64 @@ class BaseSQLLoader:
             include_unique_counts=include_unique_counts,
         )
         qualified_table = f"{schema}.{table}" if schema else table
-        model_fields = model_class.__dataclass_fields__.keys()
+        return self._records_to_field_models(
+            model_class,
+            metadata,
+            field_mapping=field_mapping,
+            default_table=qualified_table,
+        )
+
+    def _records_to_field_models(
+        self,
+        model_class: Type[FieldModel],
+        records: List[Dict[str, Any]],
+        field_mapping: Optional[Dict[str, str]] = None,
+        default_table: Optional[str] = None,
+    ) -> List[FieldModel]:
+        """Convert SQL records into field model instances."""
         loaded_fields = []
+        model_fields = model_class.__dataclass_fields__
 
-        for field_metadata in metadata:
-            kwargs = {"table": qualified_table}
-            for model_field in model_fields:
-                if model_field == "table":
-                    continue
-
-                metadata_key = (
+        for record in records:
+            kwargs = {}
+            for model_field, definition in model_fields.items():
+                source_field = (
                     field_mapping.get(model_field, model_field)
                     if field_mapping else model_field
                 )
-                if metadata_key in field_metadata:
-                    kwargs[model_field] = field_metadata[metadata_key]
+                if source_field in record and record[source_field] not in (None, ""):
+                    kwargs[model_field] = record[source_field]
+                elif model_field == "table" and default_table is not None:
+                    kwargs[model_field] = default_table
+
+                if (
+                    definition.default is MISSING
+                    and definition.default_factory is MISSING
+                    and model_field not in kwargs
+                ):
+                    raise MissingFieldMetadataError(
+                        f"Field metadata is missing required value: {model_field}"
+                    )
 
             loaded_fields.append(model_class(**kwargs))
 
         return loaded_fields
+
+    def _mapped_column_names(
+        self,
+        field_names: List[str],
+        field_mapping: Optional[Dict[str, str]] = None,
+    ) -> List[str]:
+        """Resolve model field names to the SQL columns that need to be read."""
+        columns = []
+        for field_name in field_names:
+            column_name = (
+                field_mapping.get(field_name, field_name)
+                if field_mapping else field_name
+            )
+            if column_name and column_name not in columns:
+                columns.append(column_name)
+        return columns
 
 
 class MSSQLLoader(BaseSQLLoader):
@@ -205,7 +255,7 @@ class MSSQLLoader(BaseSQLLoader):
         include_unique_counts: bool = False
     ) -> List[Dict[str, Any]]:
         """Extract field metadata from a SQL Server table."""
-        with closing(self.get_connection()) as connection:
+        with closing(self._open_connection()) as connection:
             cursor = connection.cursor()
             column_metadata = self._fetch_column_metadata(cursor, schema, table)
 
@@ -266,6 +316,72 @@ class MSSQLLoader(BaseSQLLoader):
                 field_metadata.append(metadata)
 
             return field_metadata
+
+    def fetch_table_rows(
+        self,
+        schema: str,
+        table: str,
+        columns: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Fetch selected rows and columns from a SQL table."""
+        selected_columns = columns or []
+        if not selected_columns:
+            raise MissingFieldMetadataError(
+                "At least one SQL column must be requested."
+            )
+
+        select_list = ", ".join(
+            self._quote_identifier(column_name) for column_name in selected_columns
+        )
+        query = (
+            f"SELECT {select_list} "
+            f"FROM {self._qualified_table_name(schema, table)}"
+        )
+
+        with closing(self._open_connection()) as connection:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(query)
+                rows = cursor.fetchall()
+            except Exception as exc:
+                raise InvalidTableReferenceError(
+                    f"Table not found or inaccessible: {schema}.{table}"
+                ) from exc
+
+            return [self._row_to_dict(cursor, row) for row in rows]
+
+    def _open_connection(self) -> Any:
+        """Open a database connection using the loader's standard error contract."""
+        try:
+            return self.get_connection()
+        except DatabaseConnectionError:
+            raise
+        except Exception as exc:
+            raise DatabaseConnectionError(
+                f"Failed to connect to database {self.database!r}."
+            ) from exc
+
+    def load_target_fields_from_table(
+        self,
+        schema: str,
+        table: str,
+        field_mapping: Optional[Dict[str, str]] = None,
+    ) -> List[TargetField]:
+        """Load curated target fields from a SQL table."""
+        records = self.fetch_table_rows(
+            schema,
+            table,
+            columns=self._mapped_column_names(
+                list(TargetField.__dataclass_fields__.keys()),
+                field_mapping=field_mapping,
+            ),
+        )
+        return self._records_to_field_models(
+            TargetField,
+            records,
+            field_mapping=field_mapping,
+            default_table=f"{schema}.{table}" if schema else table,
+        )
 
     def _fetch_column_metadata(
         self,
@@ -416,6 +532,8 @@ class MSSQLLoader(BaseSQLLoader):
 
     def _quote_identifier(self, identifier: str) -> str:
         """Safely quote an MSSQL identifier."""
+        if not identifier or not identifier.strip():
+            raise InvalidTableReferenceError("SQL identifiers must not be blank.")
         return f"[{identifier.replace(']', ']]')}]"
 
     def _row_to_dict(self, cursor: Any, row: Any) -> Dict[str, Any]:
@@ -433,3 +551,34 @@ class MSSQLLoader(BaseSQLLoader):
 
         column_names = [column[0] for column in cursor.description]
         return dict(zip(column_names, row))
+
+
+class MSSQLMappingLoader(MSSQLLoader):
+    """Approved mapping loader for Microsoft SQL Server tables."""
+
+    REQUIRED_FIELDS = (
+        "source_name",
+        "source_table",
+        "target_name",
+        "target_table",
+    )
+
+    def load_mappings(
+        self,
+        schema: str,
+        table: str,
+        field_mapping: Optional[Dict[str, str]] = None,
+    ) -> List[ApprovedMapping]:
+        """Load approved mappings from a SQL table."""
+        records = self.fetch_table_rows(
+            schema,
+            table,
+            columns=self._mapped_column_names(
+                list(ApprovedMapping.__dataclass_fields__.keys()),
+                field_mapping=field_mapping,
+            ),
+        )
+        return ApprovedMappingLoader().records_to_mappings(
+            records,
+            field_mapping=field_mapping,
+        )

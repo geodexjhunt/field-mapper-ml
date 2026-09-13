@@ -9,6 +9,7 @@ from field_mapper.loaders.sql_loader import (
     InvalidTableReferenceError,
     MissingFieldMetadataError,
     MSSQLLoader,
+    MSSQLMappingLoader,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "InvalidTableReferenceError",
     "MissingFieldMetadataError",
     "MSSQLLoader",
+    "MSSQLMappingLoader",
 ]

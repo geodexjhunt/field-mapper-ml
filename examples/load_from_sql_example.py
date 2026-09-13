@@ -41,6 +41,23 @@ class DemoCursor:
             self.description = [("constraint_name",), ("name",)]
             self._rows = [("PK_customers", "customer_id")]
             self._row = None
+        elif "FROM [config].[curated_target_fields]" in query:
+            self.description = None
+            self._rows = [
+                {
+                    "field_name": "customer_status",
+                    "target_table_name": "dw.dim_customer",
+                    "sql_type": "varchar",
+                    "max_len": 25,
+                },
+                {
+                    "field_name": "loyalty_tier",
+                    "target_table_name": "dw.dim_customer",
+                    "sql_type": "varchar",
+                    "max_len": 10,
+                },
+            ]
+            self._row = None
         else:
             aliases = re.findall(r"AS (col_\d+_[a-z_]+)", query)
             self.description = [(alias,) for alias in aliases]
@@ -81,7 +98,7 @@ class DemoConnection:
 
 
 def main() -> None:
-    """Load sample source and target fields from a demo SQL loader."""
+    """Load sample source fields and curated EAV target fields."""
     loader = MSSQLLoader(
         server="localhost",
         database="FieldMapperDemo",
@@ -96,9 +113,15 @@ def main() -> None:
             include_min_max=True,
             include_unique_counts=True,
         )
-        target_fields = loader.load_target_fields(
-            schema="dw",
-            table="dim_customer",
+        target_fields = loader.load_target_fields_from_table(
+            schema="config",
+            table="curated_target_fields",
+            field_mapping={
+                "name": "field_name",
+                "table": "target_table_name",
+                "data_type": "sql_type",
+                "max_length": "max_len",
+            },
         )
 
         print("Source fields:")
@@ -110,8 +133,14 @@ def main() -> None:
             print(field)
 
         print(
-            "\nTo connect to a live Microsoft SQL Server, remove the "
-            "connection_factory and ensure pyodbc is installed."
+            "\nThe curated target field table pattern is useful for EAV models "
+            "where entity-table columns and virtual attribute fields are "
+            "compiled into one SQL table for loading."
+        )
+        print(
+            "\nTo keep the original metadata behavior, you can still call "
+            "load_target_fields(schema=..., table=...) to read directly from "
+            "INFORMATION_SCHEMA."
         )
     except (
         DatabaseConnectionError,

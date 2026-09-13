@@ -1,11 +1,14 @@
-"""Approved mapping loaders for JSON and CSV sources."""
+"""Approved mapping loaders for JSON, CSV, and SQL sources."""
 
 import csv
 import json
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional
 
 from field_mapper.models import ApprovedMapping
+
+if TYPE_CHECKING:
+    from field_mapper.loaders.sql_loader import MSSQLMappingLoader
 
 
 class MalformedMappingFileError(ValueError):
@@ -13,7 +16,7 @@ class MalformedMappingFileError(ValueError):
 
 
 class ApprovedMappingLoader:
-    """Load approved mappings from JSON or CSV files."""
+    """Load approved mappings from JSON, CSV, or SQL sources."""
 
     REQUIRED_FIELDS = (
         "source_name",
@@ -122,6 +125,20 @@ class ApprovedMappingLoader:
 
         return self._records_to_mappings(records, field_mapping=field_mapping)
 
+    def load_sql(
+        self,
+        loader: "MSSQLMappingLoader",
+        schema: str,
+        table: str,
+        field_mapping: Optional[Dict[str, str]] = None,
+    ) -> List[ApprovedMapping]:
+        """Load approved mappings from a SQL table."""
+        return loader.load_mappings(
+            schema=schema,
+            table=table,
+            field_mapping=field_mapping,
+        )
+
     def _records_to_mappings(
         self,
         records: Iterable[Dict[str, str]],
@@ -134,6 +151,14 @@ class ApprovedMappingLoader:
                 ApprovedMapping(**self._normalize_record(record, field_mapping))
             )
         return normalized_mappings
+
+    def records_to_mappings(
+        self,
+        records: Iterable[Dict[str, str]],
+        field_mapping: Optional[Dict[str, str]] = None
+    ) -> List[ApprovedMapping]:
+        """Convert dictionaries into ApprovedMapping models."""
+        return self._records_to_mappings(records, field_mapping=field_mapping)
 
     def _normalize_record(
         self,
