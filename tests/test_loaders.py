@@ -133,6 +133,26 @@ def test_mssql_loader_loads_source_and_target_fields():
     assert target_fields[1].table == "dbo.customers"
 
 
+def test_mssql_loader_loads_without_stats():
+    """Loading fields without aggregate options should still succeed cleanly."""
+    cursor = FakeCursor(
+        columns=[
+            ("customer_id", "int", None, 10, 0, "NO"),
+        ],
+    )
+    loader = MSSQLLoader(
+        database="warehouse",
+        connection_factory=lambda _: FakeConnection(cursor),
+    )
+
+    source_fields = loader.load_source_fields(schema="dbo", table="customers")
+
+    assert source_fields[0].name == "customer_id"
+    assert source_fields[0].min_value is None
+    assert source_fields[0].max_value is None
+    assert source_fields[0].unique_values_count is None
+
+
 def test_mssql_loader_marks_only_single_column_unique_constraints():
     """Composite unique constraints should not mark individual columns as unique."""
     cursor = FakeCursor(
@@ -334,9 +354,15 @@ def test_approved_mapping_loader_raises_for_malformed_files(tmp_path):
 def test_approved_mapping_loader_raises_for_malformed_csv_rows(tmp_path):
     """Structurally invalid CSV rows should be rejected during parsing."""
     invalid_csv_path = tmp_path / "invalid_row.csv"
+    short_row_csv_path = tmp_path / "short_row.csv"
     invalid_csv_path.write_text(
         "source_name,source_table,target_name,target_table\n"
         "customer_id,dbo.customers,cust_id,dw.dim_customer,extra_value\n",
+        encoding="utf-8",
+    )
+    short_row_csv_path.write_text(
+        "source_name,source_table,target_name,target_table\n"
+        "customer_id,dbo.customers,cust_id\n",
         encoding="utf-8",
     )
 
@@ -344,3 +370,6 @@ def test_approved_mapping_loader_raises_for_malformed_csv_rows(tmp_path):
 
     with pytest.raises(MalformedMappingFileError):
         loader.load_csv(str(invalid_csv_path))
+
+    with pytest.raises(MalformedMappingFileError):
+        loader.load_csv(str(short_row_csv_path))

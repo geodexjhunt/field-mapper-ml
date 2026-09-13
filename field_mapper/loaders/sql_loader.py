@@ -334,6 +334,15 @@ class MSSQLLoader(BaseSQLLoader):
         include_unique_counts: bool
     ) -> Dict[str, Dict[str, Any]]:
         """Fetch value statistics for all requested columns in one query."""
+        if not include_min_max and not include_unique_counts:
+            return {
+                column_name: self._default_column_stats(
+                    include_min_max=False,
+                    include_unique_counts=False,
+                )
+                for column_name in column_names
+            }
+
         select_clauses = []
         for index, column_name in enumerate(column_names):
             quoted_column = self._quote_identifier(column_name)

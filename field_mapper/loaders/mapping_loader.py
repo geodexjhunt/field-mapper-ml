@@ -92,9 +92,17 @@ class ApprovedMappingLoader:
                     raise MalformedMappingFileError(
                         f"CSV mapping file is missing headers: {filepath}"
                     )
+                required_headers = [
+                    field_mapping.get(field_name, field_name)
+                    if field_mapping else field_name
+                    for field_name in self.REQUIRED_FIELDS
+                ]
                 records = []
                 for row_number, record in enumerate(reader, start=2):
-                    if None in record or any(value is None for value in record.values()):
+                    if (
+                        None in record
+                        or any(record.get(header) is None for header in required_headers)
+                    ):
                         raise MalformedMappingFileError(
                             f"Malformed CSV mapping row at line {row_number}: {filepath}"
                         )
