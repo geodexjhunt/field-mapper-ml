@@ -1,9 +1,10 @@
 """SQL data loaders for source and target field metadata."""
 
 from contextlib import closing
+from dataclasses import MISSING
 from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 
-from field_mapper.models import SourceField, TargetField
+from field_mapper.models import ApprovedMapping, SourceField, TargetField
 
 
 class DatabaseConnectionError(ConnectionError):
@@ -70,6 +71,15 @@ class BaseSQLLoader:
             include_unique_counts=include_unique_counts,
         )
 
+    def load_target_fields_from_table(
+        self,
+        schema: str,
+        table: str,
+        field_mapping: Optional[Dict[str, str]] = None,
+    ) -> List[TargetField]:
+        """Load curated target fields from a SQL table."""
+        raise NotImplementedError
+
     def _load_fields(
         self,
         model_class: Type[FieldModel],
@@ -87,21 +97,44 @@ class BaseSQLLoader:
             include_unique_counts=include_unique_counts,
         )
         qualified_table = f"{schema}.{table}" if schema else table
-        model_fields = model_class.__dataclass_fields__.keys()
+        return self._records_to_field_models(
+            model_class,
+            metadata,
+            field_mapping=field_mapping,
+            default_table=qualified_table,
+        )
+
+    def _records_to_field_models(
+        self,
+        model_class: Type[FieldModel],
+        records: List[Dict[str, Any]],
+        field_mapping: Optional[Dict[str, str]] = None,
+        default_table: Optional[str] = None,
+    ) -> List[FieldModel]:
+        """Convert SQL records into field model instances."""
         loaded_fields = []
+        model_fields = model_class.__dataclass_fields__
 
-        for field_metadata in metadata:
-            kwargs = {"table": qualified_table}
-            for model_field in model_fields:
-                if model_field == "table":
-                    continue
-
-                metadata_key = (
+        for record in records:
+            kwargs = {}
+            for model_field, definition in model_fields.items():
+                source_field = (
                     field_mapping.get(model_field, model_field)
                     if field_mapping else model_field
                 )
-                if metadata_key in field_metadata:
-                    kwargs[model_field] = field_metadata[metadata_key]
+                if source_field in record and record[source_field] not in (None, ""):
+                    kwargs[model_field] = record[source_field]
+                elif model_field == "table" and default_table is not None:
+                    kwargs[model_field] = default_table
+
+                if (
+                    definition.default is MISSING
+                    and definition.default_factory is MISSING
+                    and model_field not in kwargs
+                ):
+                    raise MissingFieldMetadataError(
+                        f"Field metadata is missing required value: {model_field}"
+                    )
 
             loaded_fields.append(model_class(**kwargs))
 
@@ -266,6 +299,37 @@ class MSSQLLoader(BaseSQLLoader):
                 field_metadata.append(metadata)
 
             return field_metadata
+
+    def fetch_table_rows(self, schema: str, table: str) -> List[Dict[str, Any]]:
+        """Fetch all rows from a SQL table."""
+        query = f"SELECT * FROM {self._qualified_table_name(schema, table)}"
+
+        with closing(self.get_connection()) as connection:
+            cursor = connection.cursor()
+            try:
+                cursor.execute(query)
+                rows = cursor.fetchall()
+            except Exception as exc:
+                raise InvalidTableReferenceError(
+                    f"Table not found or inaccessible: {schema}.{table}"
+                ) from exc
+
+            return [self._row_to_dict(cursor, row) for row in rows]
+
+    def load_target_fields_from_table(
+        self,
+        schema: str,
+        table: str,
+        field_mapping: Optional[Dict[str, str]] = None,
+    ) -> List[TargetField]:
+        """Load curated target fields from a SQL table."""
+        records = self.fetch_table_rows(schema, table)
+        return self._records_to_field_models(
+            TargetField,
+            records,
+            field_mapping=field_mapping,
+            default_table=f"{schema}.{table}" if schema else table,
+        )
 
     def _fetch_column_metadata(
         self,
@@ -433,3 +497,49 @@ class MSSQLLoader(BaseSQLLoader):
 
         column_names = [column[0] for column in cursor.description]
         return dict(zip(column_names, row))
+
+
+class MSSQLMappingLoader(MSSQLLoader):
+    """Approved mapping loader for Microsoft SQL Server tables."""
+
+    REQUIRED_FIELDS = (
+        "source_name",
+        "source_table",
+        "target_name",
+        "target_table",
+    )
+
+    def load_mappings(
+        self,
+        schema: str,
+        table: str,
+        field_mapping: Optional[Dict[str, str]] = None,
+    ) -> List[ApprovedMapping]:
+        """Load approved mappings from a SQL table."""
+        records = self.fetch_table_rows(schema, table)
+        approved_mappings = []
+
+        for record in records:
+            normalized = {}
+            for model_field in ApprovedMapping.__dataclass_fields__.keys():
+                source_field = (
+                    field_mapping.get(model_field, model_field)
+                    if field_mapping else model_field
+                )
+                if source_field in record and record[source_field] not in (None, ""):
+                    normalized[model_field] = record[source_field]
+
+            missing_fields = [
+                field_name
+                for field_name in self.REQUIRED_FIELDS
+                if not normalized.get(field_name)
+            ]
+            if missing_fields:
+                raise MissingFieldMetadataError(
+                    "Mapping record is missing required fields: "
+                    + ", ".join(missing_fields)
+                )
+
+            approved_mappings.append(ApprovedMapping(**normalized))
+
+        return approved_mappings

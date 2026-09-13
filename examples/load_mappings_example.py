@@ -1,4 +1,4 @@
-"""Example for loading approved mappings from JSON and CSV files."""
+"""Example for loading approved mappings from JSON, CSV, and SQL sources."""
 
 import json
 import sys
@@ -7,7 +7,43 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from field_mapper.loaders import ApprovedMappingLoader
+from field_mapper.loaders import ApprovedMappingLoader, MSSQLMappingLoader
+
+
+class DemoCursor:
+    """Simple demo cursor for loading approved mappings from SQL."""
+
+    def __init__(self):
+        self.description = None
+        self._rows = []
+
+    def execute(self, query, *params):
+        if "SELECT * FROM [config].[approved_mappings]" in query:
+            self.description = None
+            self._rows = [
+                {
+                    "src_field": "phone_number",
+                    "src_table_name": "dbo.customers",
+                    "dst_field": "customer_phone",
+                    "dst_table_name": "dw.dim_customer",
+                    "approver": "data-team",
+                }
+            ]
+        else:
+            self._rows = []
+
+    def fetchall(self):
+        return self._rows
+
+
+class DemoConnection:
+    """Simple demo connection for loading approved mappings from SQL."""
+
+    def cursor(self):
+        return DemoCursor()
+
+    def close(self):
+        return None
 
 
 def main() -> None:
@@ -51,6 +87,27 @@ def main() -> None:
 
         print("\nCSV mappings:")
         for mapping in loader.load_csv(str(csv_path)):
+            print(mapping)
+
+        sql_loader = MSSQLMappingLoader(
+            server="localhost",
+            database="FieldMapperDemo",
+            trusted_connection=True,
+            connection_factory=lambda _: DemoConnection(),
+        )
+        print("\nSQL mappings:")
+        for mapping in loader.load_sql(
+            sql_loader,
+            schema="config",
+            table="approved_mappings",
+            field_mapping={
+                "source_name": "src_field",
+                "source_table": "src_table_name",
+                "target_name": "dst_field",
+                "target_table": "dst_table_name",
+                "approved_by": "approver",
+            },
+        ):
             print(mapping)
 
 

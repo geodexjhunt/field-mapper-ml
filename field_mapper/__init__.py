@@ -7,6 +7,7 @@ from field_mapper.models import SourceField, TargetField, ApprovedMapping
 from field_mapper.loaders import (
     ApprovedMappingLoader,
     MSSQLLoader,
+    MSSQLMappingLoader,
     DatabaseConnectionError,
     InvalidTableReferenceError,
     MissingFieldMetadataError,
@@ -20,6 +21,7 @@ __all__ = [
     "ApprovedMapping",
     "ApprovedMappingLoader",
     "MSSQLLoader",
+    "MSSQLMappingLoader",
     "DatabaseConnectionError",
     "InvalidTableReferenceError",
     "MissingFieldMetadataError",

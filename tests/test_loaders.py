@@ -12,16 +12,26 @@ from field_mapper.loaders import (
     MalformedMappingFileError,
     MissingFieldMetadataError,
     MSSQLLoader,
+    MSSQLMappingLoader,
 )
 
 
 class FakeCursor:
     """Simple fake cursor for loader tests."""
 
-    def __init__(self, columns, unique_columns=None, stats=None):
+    def __init__(
+        self,
+        columns,
+        unique_columns=None,
+        stats=None,
+        table_rows=None,
+        fail_table_query=False,
+    ):
         self.columns = columns
         self.unique_columns = unique_columns or []
         self.stats = stats or {}
+        self.table_rows = table_rows or []
+        self.fail_table_query = fail_table_query
         self.description = None
         self._rows = []
         self._row = None
@@ -49,6 +59,14 @@ class FakeCursor:
                     (f"constraint_{index}", name)
                     for index, name in enumerate(self.unique_columns)
                 ]
+            self._row = None
+            return
+
+        if query.strip().startswith("SELECT * FROM"):
+            if self.fail_table_query:
+                raise RuntimeError("query failed")
+            self.description = None
+            self._rows = self.table_rows
             self._row = None
             return
 
@@ -203,6 +221,90 @@ def test_mssql_loader_raises_for_missing_field_metadata():
         loader.load_source_fields(schema="dbo", table="customers")
 
 
+def test_mssql_loader_loads_target_fields_from_curated_table():
+    """Curated target field tables should support custom column names."""
+    cursor = FakeCursor(
+        columns=[],
+        table_rows=[
+            {
+                "field_name": "customer_status",
+                "target_table_name": "dw.dim_customer",
+                "sql_type": "varchar",
+                "max_len": 25,
+                "min_val": "A",
+                "max_val": "Z",
+            }
+        ],
+    )
+    loader = MSSQLLoader(
+        database="warehouse",
+        connection_factory=lambda _: FakeConnection(cursor),
+    )
+
+    target_fields = loader.load_target_fields_from_table(
+        schema="config",
+        table="curated_target_fields",
+        field_mapping={
+            "name": "field_name",
+            "table": "target_table_name",
+            "data_type": "sql_type",
+            "max_length": "max_len",
+            "min_value": "min_val",
+            "max_value": "max_val",
+        },
+    )
+
+    assert target_fields[0].name == "customer_status"
+    assert target_fields[0].table == "dw.dim_customer"
+    assert target_fields[0].data_type == "varchar"
+    assert target_fields[0].max_length == 25
+    assert target_fields[0].min_value == "A"
+    assert target_fields[0].max_value == "Z"
+
+
+def test_mssql_loader_target_table_defaults_table_name_when_missing():
+    """Curated target records should fall back to the metadata table name."""
+    cursor = FakeCursor(
+        columns=[],
+        table_rows=[
+            {
+                "name": "customer_status",
+                "data_type": "varchar",
+            }
+        ],
+    )
+    loader = MSSQLLoader(
+        database="warehouse",
+        connection_factory=lambda _: FakeConnection(cursor),
+    )
+
+    target_fields = loader.load_target_fields_from_table(
+        schema="config",
+        table="curated_target_fields",
+    )
+
+    assert target_fields[0].table == "config.curated_target_fields"
+
+
+def test_mssql_loader_target_table_raises_for_query_failures():
+    """Curated target field queries should normalize inaccessible tables."""
+    cursor = FakeCursor(
+        columns=[],
+        table_rows=[],
+        fail_table_query=True,
+    )
+    loader = MSSQLLoader(
+        database="warehouse",
+        connection_factory=lambda _: FakeConnection(cursor),
+    )
+
+    with pytest.raises(InvalidTableReferenceError):
+        loader.load_target_fields_from_table(
+            schema="config",
+            table="curated_target_fields",
+        )
+
+
 def test_mssql_loader_wraps_connection_failures():
     """Connection factory failures should be normalized."""
     loader = MSSQLLoader(
@@ -321,6 +423,83 @@ def test_approved_mapping_loader_dispatches_by_extension_and_type(tmp_path):
 
     assert from_explicit_type[0].target_name == "cust_id"
     assert from_extension[0].source_name == "email_address"
+
+
+def test_approved_mapping_loader_reads_sql_table():
+    """ApprovedMappingLoader should delegate SQL table loading cleanly."""
+    cursor = FakeCursor(
+        columns=[],
+        table_rows=[
+            {
+                "src_field": "customer_id",
+                "src_table_name": "dbo.customers",
+                "dst_field": "cust_id",
+                "dst_table_name": "dw.dim_customer",
+                "target_type": "int",
+                "approved_user": "data-team",
+            }
+        ],
+    )
+    sql_loader = MSSQLMappingLoader(
+        database="warehouse",
+        connection_factory=lambda _: FakeConnection(cursor),
+    )
+    loader = ApprovedMappingLoader()
+
+    mappings = loader.load_sql(
+        sql_loader,
+        schema="config",
+        table="approved_mappings",
+        field_mapping={
+            "source_name": "src_field",
+            "source_table": "src_table_name",
+            "target_name": "dst_field",
+            "target_table": "dst_table_name",
+            "target_data_type": "target_type",
+            "approved_by": "approved_user",
+        },
+    )
+
+    assert mappings[0].source_name == "customer_id"
+    assert mappings[0].target_name == "cust_id"
+    assert mappings[0].target_data_type == "int"
+    assert mappings[0].approved_by == "data-team"
+
+
+def test_mssql_mapping_loader_raises_for_missing_required_fields():
+    """SQL mapping rows should validate the same required fields as files."""
+    cursor = FakeCursor(
+        columns=[],
+        table_rows=[
+            {
+                "source_name": "customer_id",
+                "source_table": "dbo.customers",
+                "target_name": "cust_id",
+            }
+        ],
+    )
+    loader = MSSQLMappingLoader(
+        database="warehouse",
+        connection_factory=lambda _: FakeConnection(cursor),
+    )
+
+    with pytest.raises(MissingFieldMetadataError):
+        loader.load_mappings(schema="config", table="approved_mappings")
+
+
+def test_mssql_mapping_loader_raises_for_query_failures():
+    """SQL mapping queries should surface inaccessible tables clearly."""
+    cursor = FakeCursor(
+        columns=[],
+        fail_table_query=True,
+    )
+    loader = MSSQLMappingLoader(
+        database="warehouse",
+        connection_factory=lambda _: FakeConnection(cursor),
+    )
+
+    with pytest.raises(InvalidTableReferenceError):
+        loader.load_mappings(schema="config", table="approved_mappings")
 
 
 def test_approved_mapping_loader_raises_for_malformed_files(tmp_path):

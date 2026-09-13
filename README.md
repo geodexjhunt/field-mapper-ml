@@ -17,7 +17,7 @@ Field Mapper ML helps automate the process of matching source database fields to
 - 🔒 **Privacy-First**: Field names only—no sensitive data exposure
 - 📝 **Batch Processing**: Review multiple files (~100-200 fields) per job
 - ✅ **Approval Workflow**: User review and approval/rejection of proposed mappings
-- 🗄️ **Extensible Data Loaders**: Load source/target metadata from SQL and approved mappings from JSON/CSV
+- 🗄️ **Extensible Data Loaders**: Load source/target metadata from SQL and approved mappings from JSON/CSV/SQL
 
 ## Architecture
 
@@ -222,17 +222,46 @@ source_fields = loader.load_source_fields(
 target_fields = loader.load_target_fields(schema="dw", table="dim_customer")
 ```
 
-The SQL loader is structured so other database loaders can follow the same
-`extract_field_metadata`, `load_source_fields`, and `load_target_fields`
-pattern later.
+### Load curated target fields from a SQL table
 
-### Load approved mappings from JSON or CSV
+This is useful for EAV-style target models where you want to combine fixed
+entity-table columns with virtual attribute names in one curated SQL table.
 
 ```python
-from field_mapper.loaders import ApprovedMappingLoader
+target_fields = loader.load_target_fields_from_table(
+    schema="config",
+    table="curated_target_fields",
+    field_mapping={
+        "name": "field_name",
+        "table": "target_table_name",
+        "data_type": "sql_type",
+        "max_length": "max_len",
+    },
+)
+```
+
+The SQL loader is structured so other database loaders can follow the same
+`extract_field_metadata`, `load_source_fields`, `load_target_fields`, and
+`load_target_fields_from_table` pattern later.
+
+### Load approved mappings from JSON, CSV, or SQL
+
+```python
+from field_mapper.loaders import ApprovedMappingLoader, MSSQLMappingLoader
 
 loader = ApprovedMappingLoader()
 approved_mappings = loader.load("approved_mappings.json")
+
+sql_loader = MSSQLMappingLoader(
+    server="localhost",
+    database="FieldMapperDemo",
+    trusted_connection=True,
+)
+approved_mappings = loader.load_sql(
+    sql_loader,
+    schema="config",
+    table="approved_mappings",
+)
 ```
 
 ## Development
