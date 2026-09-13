@@ -41,7 +41,7 @@ class DemoCursor:
             self.description = [("constraint_name",), ("name",)]
             self._rows = [("PK_customers", "customer_id")]
             self._row = None
-        elif "SELECT * FROM [config].[curated_target_fields]" in query:
+        elif "FROM [config].[curated_target_fields]" in query:
             self.description = None
             self._rows = [
                 {

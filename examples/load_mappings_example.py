@@ -18,7 +18,7 @@ class DemoCursor:
         self._rows = []
 
     def execute(self, query, *params):
-        if "SELECT * FROM [config].[approved_mappings]" in query:
+        if "FROM [config].[approved_mappings]" in query:
             self.description = None
             self._rows = [
                 {
