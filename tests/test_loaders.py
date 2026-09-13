@@ -178,6 +178,26 @@ def test_mssql_loader_builds_sql_auth_connection_string():
     assert "Trusted_Connection=yes" not in connection_string
 
 
+def test_mssql_loader_rejects_invalid_auth_configurations():
+    """Mixed or partial authentication settings should fail fast."""
+    mixed_auth_loader = MSSQLLoader(
+        database="warehouse",
+        trusted_connection=True,
+        username="etl_user",
+    )
+    partial_auth_loader = MSSQLLoader(
+        database="warehouse",
+        trusted_connection=False,
+        username="etl_user",
+    )
+
+    with pytest.raises(DatabaseConnectionError):
+        mixed_auth_loader.build_connection_string()
+
+    with pytest.raises(DatabaseConnectionError):
+        partial_auth_loader.build_connection_string()
+
+
 def test_approved_mapping_loader_reads_json_and_csv(tmp_path):
     """Mapping loader should parse both JSON and CSV files."""
     json_path = tmp_path / "approved_mappings.json"
@@ -221,6 +241,21 @@ def test_approved_mapping_loader_raises_for_malformed_files(tmp_path):
 
     with pytest.raises(MalformedMappingFileError):
         loader.load_json(str(invalid_json_path))
+
+    with pytest.raises(MalformedMappingFileError):
+        loader.load_csv(str(invalid_csv_path))
+
+
+def test_approved_mapping_loader_raises_for_malformed_csv_rows(tmp_path):
+    """Structurally invalid CSV rows should be rejected during parsing."""
+    invalid_csv_path = tmp_path / "invalid_row.csv"
+    invalid_csv_path.write_text(
+        "source_name,source_table,target_name,target_table\n"
+        "customer_id,dbo.customers,cust_id,dw.dim_customer,extra_value\n",
+        encoding="utf-8",
+    )
+
+    loader = ApprovedMappingLoader()
 
     with pytest.raises(MalformedMappingFileError):
         loader.load_csv(str(invalid_csv_path))

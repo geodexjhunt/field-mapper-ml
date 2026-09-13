@@ -87,7 +87,13 @@ class ApprovedMappingLoader:
                     raise MalformedMappingFileError(
                         f"CSV mapping file is missing headers: {filepath}"
                     )
-                records = list(reader)
+                records = []
+                for row_number, record in enumerate(reader, start=2):
+                    if None in record or any(value is None for value in record.values()):
+                        raise MalformedMappingFileError(
+                            f"Malformed CSV mapping row at line {row_number}: {filepath}"
+                        )
+                    records.append(record)
         except FileNotFoundError as exc:
             raise MalformedMappingFileError(
                 f"Mapping file not found: {filepath}"

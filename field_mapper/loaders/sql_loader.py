@@ -141,6 +141,12 @@ class MSSQLLoader(BaseSQLLoader):
                 "A database name is required for MSSQL connections."
             )
 
+        if self.trusted_connection and (self.username or self.password):
+            raise DatabaseConnectionError(
+                "Trusted authentication cannot be combined with SQL "
+                "username/password credentials."
+            )
+
         parts = [
             f"DRIVER={{{self.driver}}}",
             f"SERVER={self.server}",
