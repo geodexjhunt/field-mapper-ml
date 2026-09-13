@@ -577,29 +577,9 @@ class MSSQLMappingLoader(MSSQLLoader):
                 field_mapping=field_mapping,
             ),
         )
-        approved_mappings = []
+        from field_mapper.loaders.mapping_loader import ApprovedMappingLoader
 
-        for record in records:
-            normalized = {}
-            for model_field in ApprovedMapping.__dataclass_fields__.keys():
-                source_field = (
-                    field_mapping.get(model_field, model_field)
-                    if field_mapping else model_field
-                )
-                if source_field in record and record[source_field] not in (None, ""):
-                    normalized[model_field] = record[source_field]
-
-            missing_fields = [
-                field_name
-                for field_name in self.REQUIRED_FIELDS
-                if not normalized.get(field_name)
-            ]
-            if missing_fields:
-                raise MissingFieldMetadataError(
-                    "Mapping record is missing required fields: "
-                    + ", ".join(missing_fields)
-                )
-
-            approved_mappings.append(ApprovedMapping(**normalized))
-
-        return approved_mappings
+        return ApprovedMappingLoader()._records_to_mappings(
+            records,
+            field_mapping=field_mapping,
+        )

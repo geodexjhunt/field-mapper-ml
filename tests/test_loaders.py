@@ -560,7 +560,7 @@ def test_mssql_mapping_loader_raises_for_missing_required_fields():
         connection_factory=lambda _: FakeConnection(cursor),
     )
 
-    with pytest.raises(MissingFieldMetadataError):
+    with pytest.raises(MalformedMappingFileError):
         loader.load_mappings(schema="config", table="approved_mappings")
 
 
@@ -582,7 +582,7 @@ def test_mssql_mapping_loader_rejects_empty_required_fields():
         connection_factory=lambda _: FakeConnection(cursor),
     )
 
-    with pytest.raises(MissingFieldMetadataError):
+    with pytest.raises(MalformedMappingFileError):
         loader.load_mappings(schema="config", table="approved_mappings")
 
 
