@@ -58,6 +58,10 @@ class ApprovedMappingLoader:
             raise MalformedMappingFileError(
                 f"Malformed JSON mapping file: {filepath}"
             ) from exc
+        except OSError as exc:
+            raise MalformedMappingFileError(
+                f"Unable to read mapping file: {filepath}"
+            ) from exc
 
         if isinstance(data, dict):
             data = data.get("mappings", [])
@@ -91,6 +95,10 @@ class ApprovedMappingLoader:
         except csv.Error as exc:
             raise MalformedMappingFileError(
                 f"Malformed CSV mapping file: {filepath}"
+            ) from exc
+        except OSError as exc:
+            raise MalformedMappingFileError(
+                f"Unable to read mapping file: {filepath}"
             ) from exc
 
         return self._records_to_mappings(records, field_mapping=field_mapping)

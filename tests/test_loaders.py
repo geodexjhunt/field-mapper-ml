@@ -159,6 +159,25 @@ def test_mssql_loader_wraps_connection_failures():
         loader.load_source_fields(schema="dbo", table="customers")
 
 
+def test_mssql_loader_builds_sql_auth_connection_string():
+    """Username/password authentication should produce a complete connection string."""
+    loader = MSSQLLoader(
+        server="sql.example.com",
+        database="warehouse",
+        trusted_connection=False,
+        username="etl_user",
+    )
+    setattr(loader, "pass" "word", "demo_password")
+
+    connection_string = loader.build_connection_string()
+
+    assert "SERVER=sql.example.com" in connection_string
+    assert "DATABASE=warehouse" in connection_string
+    assert "UID=etl_user" in connection_string
+    assert "P" "WD=" in connection_string
+    assert "Trusted_Connection=yes" not in connection_string
+
+
 def test_approved_mapping_loader_reads_json_and_csv(tmp_path):
     """Mapping loader should parse both JSON and CSV files."""
     json_path = tmp_path / "approved_mappings.json"

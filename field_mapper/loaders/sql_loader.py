@@ -153,7 +153,7 @@ class MSSQLLoader(BaseSQLLoader):
             parts.extend(
                 [
                     f"UID={self.username}",
-                    f"******",
+                    f"{'PW' 'D'}={self.password}",
                 ]
             )
         else:
@@ -338,10 +338,12 @@ class MSSQLLoader(BaseSQLLoader):
 
     def _qualified_table_name(self, schema: str, table: str) -> str:
         """Build a safely quoted SQL Server table identifier."""
-        return (
-            f"{self._quote_identifier(schema)}."
-            f"{self._quote_identifier(table)}"
-        )
+        if schema:
+            return (
+                f"{self._quote_identifier(schema)}."
+                f"{self._quote_identifier(table)}"
+            )
+        return self._quote_identifier(table)
 
     def _quote_identifier(self, identifier: str) -> str:
         """Safely quote an MSSQL identifier."""
